@@ -3,12 +3,12 @@ package leandro.soares.quevedo.locationmadeeasy;
 import android.app.ProgressDialog;
 import android.content.Intent;
 import android.location.Location;
-import android.location.LocationManager;
+import android.os.Bundle;
 import android.os.Handler;
+import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.support.v7.app.AlertDialog;
 import android.support.v7.app.AppCompatActivity;
-import android.os.Bundle;
 import android.view.View;
 import android.widget.Button;
 import android.widget.TextView;
@@ -61,9 +61,7 @@ public class MainActivity extends AppCompatActivity implements LocationHelper.On
 
 	public void onCaptureLocationButtonClick (View view) {
 		// Request the location using the library
-		if (this.locationHelper.requestCurrentLocation ()) {
-			showProgressIndicator ();
-		}
+		this.locationHelper.requestCurrentLocation ();
 	}
 
 	private String getTimeString (long elapsedTime) {
@@ -85,36 +83,53 @@ public class MainActivity extends AppCompatActivity implements LocationHelper.On
 	}
 
 	@Override
-	protected void onActivityResult (int requestCode, int resultCode, @Nullable Intent data) {
-		if (locationHelper.handlePermissionsResult (requestCode, resultCode, data)) {
+	public void onRequestPermissionsResult (int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+		super.onRequestPermissionsResult (requestCode, permissions, grantResults);
+
+		if (locationHelper.handlePermissionsResult (requestCode, permissions, grantResults)) {
 			// Ignore
 		} else {
 			// Do other validations
-			super.onActivityResult (requestCode, resultCode, data);
 		}
 	}
 
 	@Override
-	public void onLocationUpdated (Location location) {
+	protected void onActivityResult (int requestCode, int resultCode, @Nullable Intent data) {
+		super.onActivityResult (requestCode, resultCode, data);
+
+		if (locationHelper.handleActivityResult (requestCode, resultCode, data)) {
+			// Ignore
+		} else {
+			// Do other validations
+		}
+	}
+
+	@Override
+	public void onLocationRequestStart () {
+		showProgressIndicator ();
+	}
+
+	@Override
+	public void onLocationRetrieved (Location location) {
 		hideProgressIndicator ();
 
 		// Create simple log entry
 		StringBuilder buffer = new StringBuilder (this.textView.getText ().toString ());
 		buffer.append ("Location: {")
-				.append (location.getLatitude ())
-				.append (", ")
-				.append (location.getLongitude ())
-				.append ("} with ")
-				.append (location.getAccuracy ())
-				.append (" of precision. (")
-				.append (getTimeString (location.getExtras ().getLong ("requestTime")))
-				.append (")\n");
+			  .append (location.getLatitude ())
+			  .append (", ")
+			  .append (location.getLongitude ())
+			  .append ("} with ")
+			  .append (location.getAccuracy ())
+			  .append (" of precision. (")
+			  .append (getTimeString (location.getExtras ().getLong ("requestTime")))
+			  .append (")\n");
 
 		this.textView.setText (buffer.toString ());
 	}
 
 	@Override
-	public void onLocationError (String message) {
+	public void onLocationRequestError (String message) {
 		hideProgressIndicator ();
 
 		// Show error message

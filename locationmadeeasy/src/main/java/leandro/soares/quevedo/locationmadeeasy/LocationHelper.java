@@ -3,17 +3,18 @@ package leandro.soares.quevedo.locationmadeeasy;
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Context;
 import android.content.ContextWrapper;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
 import android.os.Bundle;
-import android.os.CountDownTimer;
-import android.os.Handler;
-import android.os.Looper;
+import android.provider.Settings;
+import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.support.v4.app.ActivityCompat;
 import android.util.Log;
@@ -35,6 +36,7 @@ public final class LocationHelper {
 	private Context context;
 	private Location bestLocation;
 	private OnLocationUpdateListener listener;
+	private static long lastProviderRequestTime;
 
 	private LocationMinifiedListener gpsListener, networkListener, passiveListener;
 
@@ -51,6 +53,35 @@ public final class LocationHelper {
 	}
 
 	//<editor-fold defaultstate="collapsed" desc="User interface">
+
+	/**
+	 * Check location provider FINE granted
+	 */
+	public boolean checkLocationProviders () {
+		// Check the location manager
+		LocationManager locationManager = getLocationManager ();
+		if (locationManager == null) {
+			return false;
+		}
+
+		// Getting GPS status
+		boolean isGPSEnabled = locationManager.isProviderEnabled (LocationManager.GPS_PROVIDER);
+		// Getting network status
+		boolean isNetworkEnabled = locationManager.isProviderEnabled (LocationManager.NETWORK_PROVIDER);
+
+		// If none location provider enabled, request user to enable them
+		if (!isGPSEnabled && !isNetworkEnabled) {
+			showLocationSettings ();
+			return false;
+		} else if (isGPSEnabled && !isNetworkEnabled) {
+			// Call user's attention to enable network provider
+			return !showEnableProvidersDialog ();
+		} else {
+			// We got at least one provider enabled, return true
+			return true;
+		}
+	}
+
 	/**
 	 * Check permissions and automatically request them
 	 **/
@@ -58,27 +89,35 @@ public final class LocationHelper {
 		// If we don't have any permission granted
 		if (isPermissionDenied (Manifest.permission.ACCESS_FINE_LOCATION) || isPermissionDenied (Manifest.permission.ACCESS_COARSE_LOCATION)) {
 			// Request the GPS location permissions
-			ActivityCompat.requestPermissions (getCallingActivity (this.context), new String[]{
+			ActivityCompat.requestPermissions (getCallingActivity (this.context), new String[] {
 					Manifest.permission.ACCESS_FINE_LOCATION,
 					Manifest.permission.ACCESS_COARSE_LOCATION
 			}, REQUEST_CODE);
 
 			return false;
 		} else {
-			return true;
+			// Next step is to check if we got at least one provider enabled
+			return checkLocationProviders ();
 		}
 	}
 
-	public boolean handlePermissionsResult (int requestCode, int resultCode, @Nullable Intent data) {
-		if (requestCode == REQUEST_CODE && resultCode == Activity.RESULT_OK) {
-			switch (this.currentTask) {
-				case "requestCurrentLocation":
-					requestCurrentLocation ();
-					break;
-				case "requestCurrentLocationWithTimeout":
-					requestCurrentLocationWithTimeout (this.timeoutTime, this.timeoutListener);
-					break;
-			}
+	public boolean handlePermissionsResult (int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+		if (requestCode == REQUEST_CODE) {
+
+			// Try to continue the current task (PS: the task does the permission check again)
+			continueCurrentTask ();
+
+			return true;
+		} else {
+			return false;
+		}
+	}
+
+	public boolean handleActivityResult (int requestCode, int resultCode, @Nullable Intent data) {
+		if (requestCode == REQUEST_CODE) {
+
+			// Try to continue the current task (PS: the task does the permission check again)
+			continueCurrentTask ();
 
 			return true;
 		} else {
@@ -89,13 +128,13 @@ public final class LocationHelper {
 	/**
 	 * Begins the process of retrieving user's location
 	 **/
-	public boolean requestCurrentLocation () {
+	public void requestCurrentLocation () {
 		currentTask = "requestCurrentLocation";
 
 		// Check the permissions
-		if (!checkPermissions ()) return false;
-
-		return startLocationRequest ();
+		if (checkPermissions ()) {
+			startLocationRequest ();
+		}
 	}
 
 	/**
@@ -111,10 +150,14 @@ public final class LocationHelper {
 		this.timeoutTime = timeout;
 
 		// Check the permissions
-		if (!checkPermissions ()) return false;
+		if (!checkPermissions ()) {
+			return false;
+		}
 
 		// Starts the request
-		if (startLocationRequest ()) return false;
+		if (startLocationRequest ()) {
+			return false;
+		}
 
 		// If we are on debug mode, ignore the updates
 		//if (DEBUG_MODE) return;
@@ -138,10 +181,78 @@ public final class LocationHelper {
 	/**
 	 * Get the saved best location
 	 **/
-	public Location getBestLocation () { return this.bestLocation; }
+	public Location getBestLocation () {
+		return this.bestLocation;
+	}
 	//</editor-fold>
 
+	/**
+	 * Sets the best location, verifying if it is really better than the old one and if so, calls the listener
+	 **/
+	private void setBestLocation (Location newLocation) {
+		// If we got a better location, save it as current best location
+		if (isBetterLocation (newLocation, this.bestLocation)) {
+			this.bestLocation = newLocation;
+		}
+
+		// Calculate the elapsed time
+		this.bestLocation.getExtras ().putLong ("requestTime", System.currentTimeMillis () - this.beginRequestTime);
+
+		// Reset the current task
+		this.currentTask = null;
+
+		// If the flag is true, ignore any updates!
+		if (this.listener != null) {
+			// If we had a valid update, just ignore the timeout listener.
+			this.timeoutListener = null;
+			// And call the locationUpdated event!
+			listener.onLocationRetrieved (this.bestLocation);
+		}
+	}
+
 	//<editor-fold defaultstate="collapsed" desc="Internal utils">
+	private void showLocationSettings () {
+		getCallingActivity (context).startActivityForResult (new Intent (Settings.ACTION_LOCATION_SOURCE_SETTINGS), REQUEST_CODE);
+	}
+
+	private boolean showEnableProvidersDialog () {
+		try {
+			// Validation to show this dialog only once per minute
+			if (System.currentTimeMillis () - lastProviderRequestTime >= ONE_MINUTE) {
+				lastProviderRequestTime = System.currentTimeMillis ();
+
+				// Show dialog
+				new AlertDialog.Builder (context)
+						.setTitle ("Atenção")
+						.setMessage ("Para melhor resultados, gostaria de ativar a localização via internet?")
+						.setPositiveButton ("sim", new DialogInterface.OnClickListener () {
+							@Override
+							public void onClick (DialogInterface dialogInterface, int i) {
+								// Call the system's location settings screen
+								showLocationSettings ();
+							}
+						})
+						.setNegativeButton ("Não", new DialogInterface.OnClickListener () {
+							@Override
+							public void onClick (DialogInterface dialogInterface, int i) {
+								// Continue the location request
+								continueCurrentTask ();
+							}
+						})
+						.show ();
+
+				return true;
+			} else {
+				// Return false, because none dialog was showed
+				return false;
+			}
+		} catch (Exception e) {
+			// On error, simple ignore it
+			e.printStackTrace ();
+			return false;
+		}
+	}
+
 	/**
 	 * Extracts the calling activity from the specified context
 	 **/
@@ -164,6 +275,24 @@ public final class LocationHelper {
 	 **/
 	private boolean isPermissionDenied (String permission) {
 		return ActivityCompat.checkSelfPermission (context, permission) != PackageManager.PERMISSION_GRANTED;
+	}
+
+	private void continueCurrentTask () {
+		switch (this.currentTask) {
+			case "requestCurrentLocation":
+				requestCurrentLocation ();
+				break;
+			case "requestCurrentLocationWithTimeout":
+				requestCurrentLocationWithTimeout (this.timeoutTime, this.timeoutListener);
+				break;
+		}
+	}
+
+	/**
+	 * Checks whether two providers are the same
+	 **/
+	private boolean isSameProvider (String provider1, String provider2) {
+		return provider1 == null ? provider2 == null : provider1.equals (provider2);
 	}
 
 	/**
@@ -204,53 +333,29 @@ public final class LocationHelper {
 			return true;
 		} else if (isNewer && !isLessAccurate) {
 			return true;
-		} else if (isNewer && !isSignificantlyLessAccurate && isFromSameProvider) {
-			return true;
-		}
-		return false;
-	}
-
-	/**
-	 * Checks whether two providers are the same
-	 **/
-	private boolean isSameProvider (String provider1, String provider2) {
-		return provider1 == null ? provider2 == null : provider1.equals (provider2);
-	}
-
-	/**
-	 * Sets the best location, verifying if it is really better than the old one and if so, calls the listener
-	 **/
-	private void setBestLocation (Location newLocation) {
-		// If we got a better location, save it as current best location
-		if (isBetterLocation (newLocation, this.bestLocation)) {
-			this.bestLocation = newLocation;
-		}
-
-		// Calculate the elapsed time
-		this.bestLocation.getExtras ().putLong ("requestTime", System.currentTimeMillis () - this.beginRequestTime);
-
-		// Reset the current task
-		this.currentTask = null;
-
-		// If the flag is true, ignore any updates!
-		if (this.listener != null) {
-			// If we had a valid update, just ignore the timeout listener.
-			this.timeoutListener = null;
-			// And call the locationUpdated event!
-			listener.onLocationUpdated (this.bestLocation);
+		} else {
+			return isNewer && !isSignificantlyLessAccurate && isFromSameProvider;
 		}
 	}
 	//</editor-fold>
 
 	//<editor-fold defaultstate="collapsed" desc="Location handling">
+
 	/**
 	 * Begins the process of retrieving user's location
 	 **/
-	@SuppressLint("MissingPermission")
+	@SuppressLint ("MissingPermission")
 	private boolean startLocationRequest () {
-		LocationManager locationManager = getLocationManager ();
-		if (locationManager == null) return false;
+		// Calls the user event
+		this.listener.onLocationRequestStart ();
 
+		// Check the location manager
+		LocationManager locationManager = getLocationManager ();
+		if (locationManager == null) {
+			return false;
+		}
+
+		// Save the current time, to calculate the elapsed time after
 		this.beginRequestTime = System.currentTimeMillis ();
 
 		// Try to retrieve the last known location
@@ -276,7 +381,8 @@ public final class LocationHelper {
 			if (currentTime - locationTimeNetwork >= ONE_MINUTE || DEBUG_MODE) {
 				requestLocationUpdates (locationManager);
 			} else {
-				Log.d ("LocationHelper", "Network cached location " + locationNetwork.getLatitude () + ", " + locationNetwork.getLongitude () + " with precision " + locationNetwork.getAccuracy ());
+				Log.d ("LocationHelper", "Network cached location " + locationNetwork.getLatitude () + ", " + locationNetwork.getLongitude () + " with precision " + locationNetwork
+						.getAccuracy ());
 				// We got an valid and recent location, update it on the class
 				setBestLocation (locationNetwork);
 			}
@@ -320,16 +426,16 @@ public final class LocationHelper {
 					setupPassiveLocationListener (locationManager);
 				} else {
 					// Otherwise, none provider enabled. Show error
-					listener.onLocationError ("Não foi possível localizá-lo. GPS e Network inativos!");
+					listener.onLocationRequestError ("Não foi possível localizá-lo. GPS e Network inativos!");
 				}
 			}
 		} catch (Exception e) {
 			e.printStackTrace ();
-			listener.onLocationError ("Ocorreu um erro inesperado ao buscar sua localização, por favor tente novamente mais tarde!");
+			listener.onLocationRequestError ("Ocorreu um erro inesperado ao buscar sua localização, por favor tente novamente mais tarde!");
 		}
 	}
 
-	@SuppressLint("MissingPermission")
+	@SuppressLint ("MissingPermission")
 	private void setupGpsLocationListener (final LocationManager locationManager) {
 		Log.d ("LocationHelper", "Starting gps provider...");
 		// Setup the GPS listener
@@ -342,8 +448,9 @@ public final class LocationHelper {
 				// Dispose itself
 				locationManager.removeUpdates (gpsListener);
 				// Remove the other provider listener
-				if (networkListener != null)
+				if (networkListener != null) {
 					locationManager.removeUpdates (networkListener);
+				}
 			}
 		};
 		// Request the locationManager updates
@@ -355,7 +462,7 @@ public final class LocationHelper {
 		);
 	}
 
-	@SuppressLint("MissingPermission")
+	@SuppressLint ("MissingPermission")
 	private void setupNetworkLocationListener (final LocationManager locationManager) {
 		Log.d ("LocationHelper", "Starting network provider...");
 		// Setup the GPS listener
@@ -368,8 +475,9 @@ public final class LocationHelper {
 				// Dispose itself
 				locationManager.removeUpdates (networkListener);
 				// Remove the other provider listener
-				if (gpsListener != null)
+				if (gpsListener != null) {
 					locationManager.removeUpdates (gpsListener);
+				}
 			}
 		};
 		// Request the locationManager updates
@@ -381,7 +489,7 @@ public final class LocationHelper {
 		);
 	}
 
-	@SuppressLint("MissingPermission")
+	@SuppressLint ("MissingPermission")
 	private void setupPassiveLocationListener (final LocationManager locationManager) {
 		Log.d ("LocationHelper", "Starting passive provider...");
 		// Setup the passive listener
@@ -416,31 +524,49 @@ public final class LocationHelper {
 
 		// Check if we got a valid Service
 		if (locationManager == null) {
-			listener.onLocationError ("Ocorreu um erro inesperado, por favor, tente novamente mais tarde!");
+			listener.onLocationRequestError ("Ocorreu um erro inesperado, por favor, tente novamente mais tarde!");
 		}
 
 		return locationManager;
-	}
-
-	//<editor-fold defaultstate="collapsed" desc="Interfaces and anonymous classes">
-	private abstract class LocationMinifiedListener implements LocationListener {
-		@Override
-		public void onStatusChanged (String s, int i, Bundle bundle) {}
-
-		@Override
-		public void onProviderEnabled (String s) { }
-
-		@Override
-		public void onProviderDisabled (String s) { }
 	}
 
 	/**
 	 * The callback
 	 **/
 	public interface OnLocationUpdateListener {
-		void onLocationUpdated (Location location);
+		/**
+		 * Called when the location started
+		 **/
+		void onLocationRequestStart ();
 
-		void onLocationError (String message);
+		/**
+		 * Called when the location was finally provided
+		 *
+		 * @param location
+		 **/
+		void onLocationRetrieved (Location location);
+
+		/**
+		 * Called when an error occurs
+		 *
+		 * @param message
+		 **/
+		void onLocationRequestError (String message);
+	}
+
+	//<editor-fold defaultstate="collapsed" desc="Interfaces and anonymous classes">
+	private abstract class LocationMinifiedListener implements LocationListener {
+		@Override
+		public void onStatusChanged (String s, int i, Bundle bundle) {
+		}
+
+		@Override
+		public void onProviderEnabled (String s) {
+		}
+
+		@Override
+		public void onProviderDisabled (String s) {
+		}
 	}
 
 	/**
