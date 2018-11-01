@@ -102,15 +102,29 @@ public final class LocationHelper {
 		// If we don't have any permission granted
 		if (isPermissionDenied (Manifest.permission.ACCESS_FINE_LOCATION) || isPermissionDenied (Manifest.permission.ACCESS_COARSE_LOCATION)) {
 			// Request the GPS location permissions
-			ActivityCompat.requestPermissions (getCallingActivity (this.context), new String[] {
-					Manifest.permission.ACCESS_FINE_LOCATION,
-					Manifest.permission.ACCESS_COARSE_LOCATION
-			}, REQUEST_CODE);
+			requestPermissions ();
 
 			return false;
 		} else {
 			// Next step is to check if we got at least one provider enabled
 			return checkLocationProviders ();
+		}
+	}
+
+	/**
+	 * Request the GPS and Network permissions on Activity and Fragment
+	 **/
+	private void requestPermissions () {
+		if (this.fragment != null) {
+			fragment.requestPermissions (new String[] {
+					Manifest.permission.ACCESS_FINE_LOCATION,
+					Manifest.permission.ACCESS_COARSE_LOCATION
+			}, REQUEST_CODE);
+		} else {
+			ActivityCompat.requestPermissions (getCallingActivity (this.context), new String[] {
+					Manifest.permission.ACCESS_FINE_LOCATION,
+					Manifest.permission.ACCESS_COARSE_LOCATION
+			}, REQUEST_CODE);
 		}
 	}
 
