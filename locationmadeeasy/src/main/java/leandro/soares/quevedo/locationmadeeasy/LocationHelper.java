@@ -38,6 +38,7 @@ public final class LocationHelper {
 	private Context context;
 	private Location bestLocation;
 	private OnLocationUpdateListener listener;
+	private OnEnableProvidersDialog customEnableProvidersDialog;
 	private static long lastProviderRequestTime;
 
 	private LocationMinifiedListener gpsListener, networkListener, passiveListener;
@@ -211,6 +212,10 @@ public final class LocationHelper {
 	public Location getBestLocation () {
 		return this.bestLocation;
 	}
+
+	public void setCustomEnableProvidersDialog (OnEnableProvidersDialog callback) {
+		this.customEnableProvidersDialog = callback;
+	}
 	//</editor-fold>
 
 	//<editor-fold defaultstate="collapsed" desc="Internal utils">
@@ -230,25 +235,30 @@ public final class LocationHelper {
 			if (System.currentTimeMillis () - lastProviderRequestTime >= ONE_MINUTE) {
 				lastProviderRequestTime = System.currentTimeMillis ();
 
-				// Show dialog
-				new AlertDialog.Builder (this.getContext ())
-						.setTitle ("Atenção")
-						.setMessage ("Para melhor resultados, gostaria de ativar a localização via internet?")
-						.setPositiveButton ("sim", new DialogInterface.OnClickListener () {
-							@Override
-							public void onClick (DialogInterface dialogInterface, int i) {
-								// Call the system's location settings screen
-								showLocationSettings ();
-							}
-						})
-						.setNegativeButton ("Não", new DialogInterface.OnClickListener () {
-							@Override
-							public void onClick (DialogInterface dialogInterface, int i) {
-								// Continue the location request
-								continueCurrentTask ();
-							}
-						})
-						.show ();
+				// If the user specified the custom dialog handler
+				if (customEnableProvidersDialog != null) {
+					customEnableProvidersDialog.onShow ();
+				} else {
+					// Show default dialog
+					new AlertDialog.Builder (this.getContext ())
+							.setTitle ("Atenção")
+							.setMessage ("Para melhor resultados, gostaria de ativar a localização em Alta precisão?")
+							.setPositiveButton ("sim", new DialogInterface.OnClickListener () {
+								@Override
+								public void onClick (DialogInterface dialogInterface, int i) {
+									// Call the system's location settings screen
+									showLocationSettings ();
+								}
+							})
+							.setNegativeButton ("Não", new DialogInterface.OnClickListener () {
+								@Override
+								public void onClick (DialogInterface dialogInterface, int i) {
+									// Continue the location request
+									continueCurrentTask ();
+								}
+							})
+							.show ();
+				}
 
 				return true;
 			} else {
@@ -629,6 +639,10 @@ public final class LocationHelper {
 	 */
 	public interface OnLocationTimeoutListener {
 		void onLocationTimedOut ();
+	}
+
+	public interface OnEnableProvidersDialog {
+		void onShow ();
 	}
 	//</editor-fold>
 
