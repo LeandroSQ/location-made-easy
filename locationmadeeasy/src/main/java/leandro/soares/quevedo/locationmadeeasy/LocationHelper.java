@@ -17,6 +17,7 @@ import android.provider.Settings;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.support.v4.app.ActivityCompat;
+import android.support.v4.app.Fragment;
 import android.util.Log;
 
 import java.util.Date;
@@ -32,6 +33,7 @@ public final class LocationHelper {
 	private static final long DISTANCE_FOR_UPDATES = 10;// Meters
 	//</editor-fold>
 
+	private Fragment fragment;
 	private String currentTask;
 	private Context context;
 	private Location bestLocation;
@@ -49,6 +51,17 @@ public final class LocationHelper {
 
 	public LocationHelper (Context context, OnLocationUpdateListener listener) {
 		this.context = context;
+		this.listener = listener;
+	}
+
+	public LocationHelper (Fragment fragment, OnLocationUpdateListener listener) {
+		this.fragment = fragment;
+		this.context = fragment.getContext ();
+		this.listener = listener;
+	}
+
+	public LocationHelper (Activity activity, OnLocationUpdateListener listener) {
+		this.context = activity;
 		this.listener = listener;
 	}
 
@@ -186,33 +199,15 @@ public final class LocationHelper {
 	}
 	//</editor-fold>
 
-	/**
-	 * Sets the best location, verifying if it is really better than the old one and if so, calls the listener
-	 **/
-	private void setBestLocation (Location newLocation) {
-		// If we got a better location, save it as current best location
-		if (isBetterLocation (newLocation, this.bestLocation)) {
-			this.bestLocation = newLocation;
-		}
-
-		// Calculate the elapsed time
-		this.bestLocation.getExtras ().putLong ("requestTime", System.currentTimeMillis () - this.beginRequestTime);
-
-		// Reset the current task
-		this.currentTask = null;
-
-		// If the flag is true, ignore any updates!
-		if (this.listener != null) {
-			// If we had a valid update, just ignore the timeout listener.
-			this.timeoutListener = null;
-			// And call the locationUpdated event!
-			listener.onLocationRetrieved (this.bestLocation);
-		}
-	}
-
 	//<editor-fold defaultstate="collapsed" desc="Internal utils">
 	private void showLocationSettings () {
-		getCallingActivity (context).startActivityForResult (new Intent (Settings.ACTION_LOCATION_SOURCE_SETTINGS), REQUEST_CODE);
+		if (fragment != null) {
+			// On fragments we need to call directly
+			fragment.startActivityForResult (new Intent (Settings.ACTION_LOCATION_SOURCE_SETTINGS), REQUEST_CODE);
+		} else {
+			// Just call the startActivityForResult in the specified Activity
+			getCallingActivity (context).startActivityForResult (new Intent (Settings.ACTION_LOCATION_SOURCE_SETTINGS), REQUEST_CODE);
+		}
 	}
 
 	private boolean showEnableProvidersDialog () {
@@ -222,7 +217,7 @@ public final class LocationHelper {
 				lastProviderRequestTime = System.currentTimeMillis ();
 
 				// Show dialog
-				new AlertDialog.Builder (context)
+				new AlertDialog.Builder (this.getContext ())
 						.setTitle ("Atenção")
 						.setMessage ("Para melhor resultados, gostaria de ativar a localização via internet?")
 						.setPositiveButton ("sim", new DialogInterface.OnClickListener () {
@@ -258,15 +253,24 @@ public final class LocationHelper {
 	 **/
 	private Activity getCallingActivity (Context context) {
 		if (context == null) {
-			return null;
+			// If we are on a fragment, get it's parent
+			if (fragment != null) {
+				return fragment.getActivity ();
+			} else {
+				// Return null we don't have an Activity
+				return null;
+			}
 		} else if (context instanceof ContextWrapper) {
 			if (context instanceof Activity) {
+				// We are on an Activity
 				return (Activity) context;
 			} else {
+				// We are on an Activity's child
 				return getCallingActivity (((ContextWrapper) context).getBaseContext ());
 			}
 		}
 
+		// Return null we don't have an Activity
 		return null;
 	}
 
@@ -274,7 +278,36 @@ public final class LocationHelper {
 	 * Retrieves true if a specified permission is denied
 	 **/
 	private boolean isPermissionDenied (String permission) {
-		return ActivityCompat.checkSelfPermission (context, permission) != PackageManager.PERMISSION_GRANTED;
+		if (this.fragment != null) {
+			// Is a fragment
+			return ActivityCompat.checkSelfPermission (fragment.getContext (), permission) != PackageManager.PERMISSION_GRANTED;
+		} else {// Otherwise is a Activity
+			return ActivityCompat.checkSelfPermission (context, permission) != PackageManager.PERMISSION_GRANTED;
+		}
+	}
+
+	/**
+	 * Sets the best location, verifying if it is really better than the old one and if so, calls the listener
+	 **/
+	private void setBestLocation (Location newLocation) {
+		// If we got a better location, save it as current best location
+		if (isBetterLocation (newLocation, this.bestLocation)) {
+			this.bestLocation = newLocation;
+		}
+
+		// Calculate the elapsed time
+		this.bestLocation.getExtras ().putLong ("requestTime", System.currentTimeMillis () - this.beginRequestTime);
+
+		// Reset the current task
+		this.currentTask = null;
+
+		// If the flag is true, ignore any updates!
+		if (this.listener != null) {
+			// If we had a valid update, just ignore the timeout listener.
+			this.timeoutListener = null;
+			// And call the locationUpdated event!
+			listener.onLocationRetrieved (this.bestLocation);
+		}
 	}
 
 	private void continueCurrentTask () {
@@ -336,6 +369,23 @@ public final class LocationHelper {
 		} else {
 			return isNewer && !isSignificantlyLessAccurate && isFromSameProvider;
 		}
+	}
+
+	/**
+	 * Retrieve the location manager service, if available
+	 *
+	 * @return The location manager
+	 **/
+	private LocationManager getLocationManager () {
+		// Request system service
+		LocationManager locationManager = (LocationManager) this.getContext ().getSystemService (Context.LOCATION_SERVICE);
+
+		// Check if we got a valid Service
+		if (locationManager == null) {
+			listener.onLocationRequestError ("Ocorreu um erro inesperado, por favor, tente novamente mais tarde!");
+		}
+
+		return locationManager;
 	}
 	//</editor-fold>
 
@@ -513,21 +563,12 @@ public final class LocationHelper {
 	}
 	//</editor-fold>
 
-	/**
-	 * Retrieve the location manager service, if available
-	 *
-	 * @return The location manager
-	 **/
-	private LocationManager getLocationManager () {
-		// Request system service
-		LocationManager locationManager = (LocationManager) context.getSystemService (Context.LOCATION_SERVICE);
-
-		// Check if we got a valid Service
-		if (locationManager == null) {
-			listener.onLocationRequestError ("Ocorreu um erro inesperado, por favor, tente novamente mais tarde!");
+	private Context getContext () {
+		if (this.fragment != null) {
+			return fragment.getContext ();
+		} else {
+			return context;
 		}
-
-		return locationManager;
 	}
 
 	/**
