@@ -132,8 +132,16 @@ public final class LocationHelper {
 	public boolean handlePermissionsResult (int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
 		if (requestCode == REQUEST_CODE) {
 
-			// Try to continue the current task (PS: the task does the permission check again)
-			continueCurrentTask ();
+			try {
+				if (grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+					// Try to continue the current task (PS: the task does the permission check again)
+					continueCurrentTask ();
+				} else {
+					listener.onLocationRequestError ("Permissão negada");
+				}
+			} catch (Exception e) {
+				listener.onLocationRequestError (e.getMessage ());
+			}
 
 			return true;
 		} else {
