@@ -12,6 +12,7 @@ import android.content.pm.PackageManager;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
+import android.net.Uri;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.support.annotation.NonNull;
@@ -112,6 +113,34 @@ public final class LocationHelper {
 		}
 	}
 
+	private boolean checkPermissionsAndProviders () {
+		if (isPermissionDenied (Manifest.permission.ACCESS_FINE_LOCATION) || isPermissionDenied (Manifest.permission.ACCESS_COARSE_LOCATION)) {
+			return false;
+		} else {
+			// Check the location manager
+			LocationManager locationManager = getLocationManager ();
+
+			if (locationManager == null) {
+				return false;
+			}
+
+			// Getting GPS status
+			boolean isGPSEnabled = locationManager.isProviderEnabled (LocationManager.GPS_PROVIDER);
+			// Getting network status
+			boolean isNetworkEnabled = locationManager.isProviderEnabled (LocationManager.NETWORK_PROVIDER);
+
+			// If none location provider enabled, request user to enable them
+			return isGPSEnabled || isNetworkEnabled;
+		}
+	}
+
+	/**
+	 * Verifies if app is able to show permission grant dialog
+	 **/
+	private boolean checkPermissionRationale (String permission) {
+		return ActivityCompat.shouldShowRequestPermissionRationale (getCallingActivity (this.context), permission);
+	}
+
 	/**
 	 * Request the GPS and Network permissions on Activity and Fragment
 	 **/
@@ -137,7 +166,12 @@ public final class LocationHelper {
 					// Try to continue the current task (PS: the task does the permission check again)
 					continueCurrentTask ();
 				} else {
-					listener.onLocationRequestError ("Permissão negada");
+					if (checkPermissionRationale (Manifest.permission.ACCESS_FINE_LOCATION) && checkPermissionRationale (Manifest.permission.ACCESS_COARSE_LOCATION)) {
+						requestPermissions ();
+					} else {
+						showApplicationSettings ();
+						listener.onLocationRequestError ("Permissão negada");
+					}
 				}
 			} catch (Exception e) {
 				listener.onLocationRequestError (e.getMessage ());
@@ -152,8 +186,10 @@ public final class LocationHelper {
 	public boolean handleActivityResult (int requestCode, int resultCode, @Nullable Intent data) {
 		if (requestCode == REQUEST_CODE) {
 
-			// Try to continue the current task (PS: the task does the permission check again)
-			continueCurrentTask ();
+			// Try to continue the current task, only if we got now valid permissions and providers
+			if (checkPermissionsAndProviders ()) {
+				continueCurrentTask ();
+			}
 
 			return true;
 		} else {
@@ -236,6 +272,16 @@ public final class LocationHelper {
 			// Just call the startActivityForResult in the specified Activity
 			getCallingActivity (context).startActivityForResult (new Intent (Settings.ACTION_LOCATION_SOURCE_SETTINGS), REQUEST_CODE);
 		}
+	}
+
+	private void showApplicationSettings () {
+		Intent intent = new Intent ();
+		intent.setAction (Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+		intent.addCategory (Intent.CATEGORY_DEFAULT);
+		intent.setData (Uri.parse ("package:" + context.getPackageName ()));
+		intent.addFlags (Intent.FLAG_ACTIVITY_NEW_TASK);
+		intent.addFlags (Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS);
+		context.startActivity (intent);
 	}
 
 	private boolean showEnableProvidersDialog () {
