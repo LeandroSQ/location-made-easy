@@ -390,6 +390,9 @@ public final class LocationHelper {
 	}
 
 	private void continueCurrentTask () {
+		// Null check
+		if (this.currentTask.isEmpty () || this.currentTask == null) return;
+
 		switch (this.currentTask) {
 			case "requestCurrentLocation":
 				requestCurrentLocation ();
